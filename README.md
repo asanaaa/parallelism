@@ -3,4 +3,7 @@ To run the program, you need to type in the console:
 ```cmake .. -DDOUBLE=ON/OFF```  
 ***(ON to enable double and OFF to disable double)***  
 ```make```  
-```/laba1```
+```/laba1```  
+### My results:  
+Double=on 3.68912e-10  
+Double=off 0.031421
