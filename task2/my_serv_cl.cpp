@@ -14,7 +14,8 @@
 
 #define myType double
 
-std::mutex cout_mutex; // Мьютекс для синхронизации вывода
+// Мьютекс для синхронизации вывода
+std::mutex cout_mutex; 
 
 template<typename T>
 T fun_sin(T arg) {
@@ -41,20 +42,18 @@ public:
         stop();
         {
             std::lock_guard<std::mutex> lock(result_mutex);
-            results.clear(); // Очищаем все futures
+            results.clear();
         }
     }
 
     void start() {
-        stop_flag = false;
         server_thread = std::jthread(&Server::server_loop, this, stop_src.get_token());
     }
 
     void stop() {
-        stop_flag = true;
+        stop_src.request_stop();
         cond_var.notify_one();
         if (server_thread.joinable()) {
-            stop_src.request_stop();
             server_thread.join();
         }
     }
@@ -64,9 +63,9 @@ public:
         std::packaged_task<T()> packaged_task(std::move(task));
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
-            tasks.emplace(task_id, std::move(packaged_task)); // Добавляем задачу в очередь
+            tasks.emplace(task_id, std::move(packaged_task));
         }
-        cond_var.notify_one(); // Уведомляем поток сервера о новой задаче
+        cond_var.notify_one();
         // std::cout << "Add\n";
         return task_id;
     }
@@ -80,6 +79,7 @@ public:
     double request_result(size_t task_id) {
         std::unique_lock<std::mutex> lock(result_mutex);
         auto it = results.find(task_id);
+
         if (it == results.end()) {
             throw std::runtime_error("Task ID not found!");
         }
@@ -91,13 +91,12 @@ public:
 
 private:
     std::jthread server_thread;
-    std::queue<std::pair<size_t, std::packaged_task<T()>>> tasks; // Изменен тип задач
-    std::unordered_map<size_t, std::optional<T>> results; // Изменен тип результатов
+    std::queue<std::pair<size_t, std::packaged_task<T()>>> tasks;
+    std::unordered_map<size_t, std::optional<T>> results;
 
     std::mutex queue_mutex, result_mutex;
     std::stop_source stop_src;
     std::condition_variable cond_var;
-    std::atomic<bool> stop_flag{false};
     std::atomic<size_t> task_counter{0};
 
     void server_loop(std::stop_token stoken) {
@@ -105,9 +104,9 @@ private:
             std::pair<size_t, std::packaged_task<T()>> task;
             {
                 std::unique_lock<std::mutex> lock(queue_mutex);
-                cond_var.wait(lock, [this] { return !tasks.empty() || stop_flag; });
+                cond_var.wait(lock, [this, &stoken] { return !tasks.empty() ||  stoken.stop_requested(); });
 
-                if (stop_flag) break;
+                if (stoken.stop_requested()) break;
 
                 if (!tasks.empty()) {
                     task = std::move(tasks.front());
@@ -116,34 +115,25 @@ private:
             }
             // std::cout << "Pop\n";
 
-            // Проверяем валидность packaged_task
-            if (!task.second.valid()) {
-                std::cerr << "Invalid packaged_task!\n";
-                continue;
-            }
-
-            // Создаем future перед выполнением задачи
             std::future<T> result = task.second.get_future();
-            // Выполнение задачи
             try {
-                task.second(); // Выполняем задачу
+                task.second();
             } catch (const std::exception& e) {
                 std::cerr << "Task execution failed: " << e.what() << '\n';
                 continue;
             }
             // std::cout << "Done\n";
 
-            // Сохраняем результат в карте
             {
                 std::lock_guard<std::mutex> lock(result_mutex);
-                results[task.first] = result.get(); // Сохраняем результат
+                results[task.first] = result.get();
             }
         }
         std::cout << "Server stopped.\n";
     }
 };
 
-// Поток, который добавляет задачи в очередь
+
 void add_task1_thread(Server<myType>& server, std::ofstream& out) {
 
     for(int i = 0; i < 1000; ++i)
@@ -151,7 +141,6 @@ void add_task1_thread(Server<myType>& server, std::ofstream& out) {
         double arg = std::experimental::randint(0, 100);
         size_t task_id = server.add_task(std::bind(fun_sin<myType>, arg));
 
-        // Ожидаем завершения задачи
         while (!server.is_task_completed(task_id)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -170,7 +159,6 @@ void add_task2_thread(Server<myType>& server, std::ofstream& out) {
         double arg = std::experimental::randint(0, 100);
         size_t task_id = server.add_task(std::bind(fun_sqrt<myType>, arg));
 
-        // Ожидаем завершения задачи
         while (!server.is_task_completed(task_id)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -190,7 +178,6 @@ void add_task3_thread(Server<myType>& server, std::ofstream& out) {
         double arg2 = std::experimental::randint(0, 20);
         size_t task_id = server.add_task(std::bind(fun_pow<myType>, arg1, arg2));
 
-        // Ожидаем завершения задачи
         while (!server.is_task_completed(task_id)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -206,7 +193,7 @@ int main() {
     std::cout << "Start\n";
 
     Server<myType> server;
-    server.start(); // Запуск потока сервера
+    server.start();
 
     std::ofstream out;
     out.open("Results.txt");
