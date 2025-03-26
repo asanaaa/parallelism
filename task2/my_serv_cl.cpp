@@ -14,7 +14,6 @@
 
 #define myType double
 
-// Мьютекс для синхронизации вывода
 std::mutex cout_mutex; 
 
 template<typename T>
@@ -61,20 +60,25 @@ public:
     size_t add_task(std::function<double()> task) {
         size_t task_id = task_counter++;
         std::packaged_task<T()> packaged_task(std::move(task));
+        std::future<T> result = packaged_task.get_future();
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
             tasks.emplace(task_id, std::move(packaged_task));
+        }
+        {
+            std::lock_guard<std::mutex> lock(result_mutex);
+            results[task_id] = std::move(result);
         }
         cond_var.notify_one();
         // std::cout << "Add\n";
         return task_id;
     }
 
-    bool is_task_completed(size_t task_id) {
-        std::lock_guard<std::mutex> lock(result_mutex);
-        auto it = results.find(task_id);
-        return it != results.end() && it->second.has_value();
-    }
+    // bool is_task_completed(size_t task_id) {
+    //     std::lock_guard<std::mutex> lock(result_mutex);
+    //     auto it = results.find(task_id);
+    //     return it != results.end() && it->second.has_value();
+    // }
 
     double request_result(size_t task_id) {
         std::unique_lock<std::mutex> lock(result_mutex);
@@ -83,16 +87,14 @@ public:
         if (it == results.end()) {
             throw std::runtime_error("Task ID not found!");
         }
-        if (!it->second.has_value()) {
-            throw std::runtime_error("Task result is not ready!");
-        }
-        return it->second.value();
+        it->second.wait();
+        return it->second.get();
     }
 
 private:
     std::jthread server_thread;
     std::queue<std::pair<size_t, std::packaged_task<T()>>> tasks;
-    std::unordered_map<size_t, std::optional<T>> results;
+    std::unordered_map<size_t, std::future<T>> results;
 
     std::mutex queue_mutex, result_mutex;
     std::stop_source stop_src;
@@ -115,7 +117,6 @@ private:
             }
             // std::cout << "Pop\n";
 
-            std::future<T> result = task.second.get_future();
             try {
                 task.second();
             } catch (const std::exception& e) {
@@ -124,10 +125,7 @@ private:
             }
             // std::cout << "Done\n";
 
-            {
-                std::lock_guard<std::mutex> lock(result_mutex);
-                results[task.first] = result.get();
-            }
+
         }
         std::cout << "Server stopped.\n";
     }
@@ -142,10 +140,6 @@ void add_task1_thread(Server<myType>& server) {
         double arg = std::experimental::randint(0, 100);
         size_t task_id = server.add_task(std::bind(fun_sin<myType>, arg));
 
-        while (!server.is_task_completed(task_id)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
         out << "sin " << arg << " = " << server.request_result(task_id) << '\n';
     }
     out.close();
@@ -158,10 +152,6 @@ void add_task2_thread(Server<myType>& server) {
     {    
         double arg = std::experimental::randint(0, 100);
         size_t task_id = server.add_task(std::bind(fun_sqrt<myType>, arg));
-
-        while (!server.is_task_completed(task_id)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
 
         out << "sqrt " << arg << " = " << server.request_result(task_id) << '\n';
     }
