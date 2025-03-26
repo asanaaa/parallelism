@@ -134,8 +134,9 @@ private:
 };
 
 
-void add_task1_thread(Server<myType>& server, std::ofstream& out) {
-
+void add_task1_thread(Server<myType>& server) {
+    std::ofstream out;
+    out.open("Task1.txt");
     for(int i = 0; i < 1000; ++i)
     {    
         double arg = std::experimental::randint(0, 100);
@@ -145,15 +146,14 @@ void add_task1_thread(Server<myType>& server, std::ofstream& out) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-        {
-            std::lock_guard<std::mutex> lock(cout_mutex);
-            out << "sin " << arg << " = " << server.request_result(task_id) << '\n';
-        }
+        out << "sin " << arg << " = " << server.request_result(task_id) << '\n';
     }
+    out.close();
 }
 
-void add_task2_thread(Server<myType>& server, std::ofstream& out) {
-
+void add_task2_thread(Server<myType>& server) {
+    std::ofstream out;
+    out.open("Task2.txt");
     for(int i = 0; i < 1000; ++i)
     {    
         double arg = std::experimental::randint(0, 100);
@@ -163,30 +163,23 @@ void add_task2_thread(Server<myType>& server, std::ofstream& out) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-        {
-            std::lock_guard<std::mutex> lock(cout_mutex);
-            out << "sqrt " << arg << " = " << server.request_result(task_id) << '\n';
-        }
+        out << "sqrt " << arg << " = " << server.request_result(task_id) << '\n';
     }
+    out.close();
 }
 
-void add_task3_thread(Server<myType>& server, std::ofstream& out) {
-
+void add_task3_thread(Server<myType>& server) {
+    std::ofstream out;
+    out.open("Task3.txt");
     for(int i = 0; i < 1000; ++i)
     {    
         double arg1 = std::experimental::randint(0, 100);
         double arg2 = std::experimental::randint(0, 20);
         size_t task_id = server.add_task(std::bind(fun_pow<myType>, arg1, arg2));
 
-        while (!server.is_task_completed(task_id)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(cout_mutex);
-            out << "pow " << arg1 << " " <<  arg2 << " = " << server.request_result(task_id) << '\n';
-        }
+        out << "pow " << arg1 << " " <<  arg2 << " = " << server.request_result(task_id) << '\n';
     }
+    out.close();
 }
 
 int main() {
@@ -195,16 +188,14 @@ int main() {
     Server<myType> server;
     server.start();
 
-    std::ofstream out;
-    out.open("Results.txt");
-    std::thread add_task1(add_task1_thread, std::ref(server), std::ref(out));
-    std::thread add_task2(add_task2_thread, std::ref(server), std::ref(out));
-    std::thread add_task3(add_task3_thread, std::ref(server), std::ref(out));
+    std::thread add_task1(add_task1_thread, std::ref(server));
+    std::thread add_task2(add_task2_thread, std::ref(server));
+    std::thread add_task3(add_task3_thread, std::ref(server));
 
     add_task1.join();
     add_task2.join();
     add_task3.join();
     server.stop();
-    out.close();
+
     std::cout << "End\n";
 }

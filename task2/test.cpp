@@ -89,13 +89,15 @@ void test_results(const std::string& filename) {
     }
 
     if (all_passed) {
-        std::cout << line_number << " tests passed.\n";
+        std::cout << line_number << " tests passed from file " << filename << ".\n";
     } else {
         std::cerr << "Fail.\n";
     }
 }
 
 int main() {
-    test_results("Results.txt");
+    test_results("Task1.txt");
+    test_results("Task2.txt");
+    test_results("Task3.txt");
     return 0;
 }
