@@ -135,7 +135,7 @@ private:
 void add_task1_thread(Server<myType>& server) {
     std::ofstream out;
     out.open("Task1.txt");
-    for(int i = 0; i < 1000; ++i)
+    for(int i = 0; i < 10000; ++i)
     {    
         double arg = std::experimental::randint(0, 100);
         size_t task_id = server.add_task(std::bind(fun_sin<myType>, arg));
@@ -148,7 +148,7 @@ void add_task1_thread(Server<myType>& server) {
 void add_task2_thread(Server<myType>& server) {
     std::ofstream out;
     out.open("Task2.txt");
-    for(int i = 0; i < 1000; ++i)
+    for(int i = 0; i < 10000; ++i)
     {    
         double arg = std::experimental::randint(0, 100);
         size_t task_id = server.add_task(std::bind(fun_sqrt<myType>, arg));
@@ -161,7 +161,7 @@ void add_task2_thread(Server<myType>& server) {
 void add_task3_thread(Server<myType>& server) {
     std::ofstream out;
     out.open("Task3.txt");
-    for(int i = 0; i < 1000; ++i)
+    for(int i = 0; i < 10000; ++i)
     {    
         double arg1 = std::experimental::randint(0, 100);
         double arg2 = std::experimental::randint(0, 20);
