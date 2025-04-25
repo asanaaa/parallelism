@@ -1,7 +1,8 @@
 #include <boost/program_options.hpp>
 #include <iostream>
 #include <chrono>
-// #include "laplace2d.h"
+#include <cublas_v2.h>
+#include <memory> 
 #include <nvtx3/nvToolsExt.h>
 
 #define OFFSET(x, y, m) (((x)*(m)) + (y))
@@ -82,12 +83,26 @@ int main(int argc, char** argv) {
     std::chrono::steady_clock::time_point st = std::chrono::steady_clock::now();
     int iter = 0;
     double error = 1.0;
-    // double inner_error = 0.0;
- 
+
+    auto cublas_deleter = [](cublasHandle_t* handle) {
+        if (handle && *handle) {
+            cublasDestroy(*handle);
+            delete handle;
+        }
+    };
+
+    cublasStatus_t stat;
+    std::unique_ptr<cublasHandle_t, decltype(cublas_deleter)> cublasHandlePtr(new cublasHandle_t, cublas_deleter);
+    cublasCreate(cublasHandlePtr.get());
+
+    int idx_max;
+    double* d_error_array;
+    cudaMalloc((void**)&d_error_array, sizeof(double)*n*m);
+
+    // std::cout << "Start while\n";
     nvtxRangePushA("while");
-    #pragma acc data copy(A[0:n*m], Anew[0:n*m])
-    {
-        double inner_error = 0.0;
+    #pragma acc data copy(A[0:n*m], Anew[0:n*m]) create(d_error_array[0:n*m])
+    { 
         while (error > tol && iter < iter_max) {
 
             #pragma acc parallel loop collapse(2) present(A, Anew)
@@ -95,26 +110,41 @@ int main(int argc, char** argv) {
                 for (int j = 1; j < m - 1; ++j) {
                     Anew[OFFSET(i, j, m)] = 0.25 * (A[OFFSET(i, j+1, m)] + A[OFFSET(i, j-1, m)]
                                                     + A[OFFSET(i+1, j, m)] + A[OFFSET(i-1, j, m)]);
-                    inner_error = fmax(inner_error, fabs(Anew[OFFSET(i, j, m)] - A[OFFSET(i, j, m)]));
                 }
+            }
+            // std::cout << "End count\n";
+
+            if (iter % 1000 == 0){
+                // std::cout << "in error\n";
+                #pragma acc parallel loop collapse(2) present(A, Anew)
+                for (int i = 1; i < n - 1; ++i) {
+                    for (int j = 1; j < m - 1; ++j) {
+                        d_error_array[OFFSET(i,j,m)] = fabs(Anew[OFFSET(i,j,m)] - A[OFFSET(i,j,m)]);
+                    }
+                }
+                // std::cout << "end count error\n";
+                #pragma acc host_data use_device(d_error_array)
+                {
+                    stat = cublasIdamax(*cublasHandlePtr, n * m, d_error_array, 1, &idx_max);
+                    if (stat != CUBLAS_STATUS_SUCCESS) {
+                        std::cout << "cublasIdamax failed\n";
+                    }
+
+
+                    if (idx_max > 0 && idx_max <= n * m) {
+                        idx_max -= 1;
+                        cudaMemcpy(&error, &d_error_array[idx_max], sizeof(double), cudaMemcpyDeviceToHost);
+                    } else {
+                        std::cerr << "Warning: cublasIdamax returned index " << (idx_max+1) << "\n";
+                        error = 0.0;
+                    }
+                }
+
             }
 
             double* temp = A;
             A = Anew;
             Anew = temp;
-            error = inner_error;
-
-            if (iter % 1000 == 0){
-                inner_error = 0.0;
-                #pragma acc parallel loop collapse(2) present(A, Anew) reduction(max:inner_error)
-                for (int i = 1; i < n - 1; ++i) {
-                    for (int j = 1; j < m - 1; ++j) {
-                        if(iter % 1000 == 0)
-                            inner_error = fmax(inner_error, fabs(Anew[OFFSET(i, j, m)] - A[OFFSET(i, j, m)]));
-                    }
-                }
-                error = inner_error;
-            }
 
             if(iter % 10000 == 0)
                 std::cout << iter << ", error = " << error << "\n";
@@ -126,19 +156,19 @@ int main(int argc, char** argv) {
  
     std::chrono::steady_clock::time_point fn = std::chrono::steady_clock::now();
     std::chrono::duration<double> runtime = std::chrono::duration_cast<std::chrono::duration<double>>(fn - st);
-
-
+    
     std::cout << "iterations: " << iter << "\n";
     std::cout << "error: " << error << "\n";
     std::cout << "time: " << runtime.count() << " seconds\n";
 
-    for (int i = 1; i < n - 1; ++i) {
-        for (int j = 1; j < m - 1; ++j) {
-            std::cout << Anew[OFFSET(i, j, m)] << " ";
-        }
-        std::cout << std::endl;
-    }
- 
+    // for (int i = 1; i < n - 1; ++i) {
+    //     for (int j = 1; j < m - 1; ++j) {
+    //         std::cout << Anew[OFFSET(i, j, m)] << " ";
+    //     }
+    //     std::cout << std::endl;
+    // }
+
+    cudaFree(d_error_array);
     deallocate(A, Anew);
  
     return 0;
