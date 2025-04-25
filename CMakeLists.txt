@@ -8,8 +8,8 @@ message("-!-Compile C: " ${CMAKE_CXX_COMPILER})
 find_package(CUDAToolkit REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
 
-list(APPEND option_compile -acc=gpu -Minfo=all)
-list(APPEND option_link -acc=gpu)
+list(APPEND option_compile -acc=gpu -cudalib=cublas -Minfo=all)
+list(APPEND option_link -acc=gpu -cudalib=cublas)
 
 # Добавляем исходники
 set(SRC   
