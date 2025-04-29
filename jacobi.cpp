@@ -41,12 +41,6 @@ void initialize(double *A, double *Anew, int m, int n) {
    }
 }
 
-void deallocate(double * A, double * Anew)
-{
-    free(A);
-    free(Anew);
-}
-
 namespace po = boost::program_options;
 
 int main(int argc, char** argv) {
@@ -70,12 +64,13 @@ int main(int argc, char** argv) {
     }
 
     m = n;
- 
-    double * A    = (double*)malloc(sizeof(double)*n*m);
-    double * Anew = (double*)malloc(sizeof(double)*n*m);
+
+    std::unique_ptr<double[]> A_smart = std::make_unique<double[]>(n*m);
+    std::unique_ptr<double[]> Anew_smart = std::make_unique<double[]>(n*m);
+    std::unique_ptr<double[]> error_smart = std::make_unique<double[]>(n*m);
 
     nvtxRangePushA("init");
-    initialize(A, Anew, m, n);
+    initialize(A_smart.get(), Anew_smart.get(), m, n);
     nvtxRangePop();
  
     std::cout << "Jacobi relaxation Calculation: " << n << " x " << m << " mesh\n";
@@ -96,44 +91,50 @@ int main(int argc, char** argv) {
     cublasCreate(cublasHandlePtr.get());
 
     int idx_max;
-    double* d_error_array;
-    cudaMalloc((void**)&d_error_array, sizeof(double)*n*m);
+    auto A = A_smart.get();
+    auto Anew = Anew_smart.get();
+    auto error_array = error_smart.get();
 
-    // std::cout << "Start while\n";
     nvtxRangePushA("while");
-    #pragma acc data copy(A[0:n*m], Anew[0:n*m]) create(d_error_array[0:n*m])
+    #pragma acc data copy(A[0:n*m], Anew[0:n*m], error_array[0:n*m])
     { 
-        while (error > tol && iter < iter_max) {
+        while (fabs(error) > tol && iter < iter_max) {
 
             #pragma acc parallel loop collapse(2) present(A, Anew)
             for (int i = 1; i < n - 1; ++i) {
                 for (int j = 1; j < m - 1; ++j) {
                     Anew[OFFSET(i, j, m)] = 0.25 * (A[OFFSET(i, j+1, m)] + A[OFFSET(i, j-1, m)]
                                                     + A[OFFSET(i+1, j, m)] + A[OFFSET(i-1, j, m)]);
+                    error_array[OFFSET(i, j, m)] = Anew[OFFSET(i, j, m)];
                 }
             }
-            // std::cout << "End count\n";
 
             if (iter % 1000 == 0){
-                // std::cout << "in error\n";
-                #pragma acc parallel loop collapse(2) present(A, Anew)
-                for (int i = 1; i < n - 1; ++i) {
-                    for (int j = 1; j < m - 1; ++j) {
-                        d_error_array[OFFSET(i,j,m)] = fabs(Anew[OFFSET(i,j,m)] - A[OFFSET(i,j,m)]);
-                    }
-                }
-                // std::cout << "end count error\n";
-                #pragma acc host_data use_device(d_error_array)
+                #pragma acc host_data use_device(A, Anew, error_array)
                 {
-                    stat = cublasIdamax(*cublasHandlePtr, n * m, d_error_array, 1, &idx_max);
+                    double alpha = -1;
+                    cublasDaxpy(*cublasHandlePtr, n*m, &alpha, A, 1, error_array, 1);
+                }
+                #pragma acc parallel loop present(error_array)
+                for (int i = 0; i < n; ++i) {
+                    error_array[OFFSET(i, 0, m)] = 0.0;
+                    error_array[OFFSET(i, m-1, m)] = 0.0;
+                }
+                #pragma acc parallel loop present(error_array)
+                for (int j = 0; j < m; ++j) {
+                    error_array[OFFSET(0, j, m)] = 0.0;
+                    error_array[OFFSET(n-1, j, m)] = 0.0;
+                }
+                #pragma acc host_data use_device(A, Anew, error_array)
+                {
+                    stat = cublasIdamax(*cublasHandlePtr, n*m, error_array, 1, &idx_max);
                     if (stat != CUBLAS_STATUS_SUCCESS) {
                         std::cout << "cublasIdamax failed\n";
                     }
 
-
                     if (idx_max > 0 && idx_max <= n * m) {
                         idx_max -= 1;
-                        cudaMemcpy(&error, &d_error_array[idx_max], sizeof(double), cudaMemcpyDeviceToHost);
+                        cudaMemcpy(&error, &error_array[idx_max], sizeof(double), cudaMemcpyDeviceToHost);
                     } else {
                         std::cerr << "Warning: cublasIdamax returned index " << (idx_max+1) << "\n";
                         error = 0.0;
@@ -160,16 +161,6 @@ int main(int argc, char** argv) {
     std::cout << "iterations: " << iter << "\n";
     std::cout << "error: " << error << "\n";
     std::cout << "time: " << runtime.count() << " seconds\n";
-
-    // for (int i = 1; i < n - 1; ++i) {
-    //     for (int j = 1; j < m - 1; ++j) {
-    //         std::cout << Anew[OFFSET(i, j, m)] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-
-    cudaFree(d_error_array);
-    deallocate(A, Anew);
  
     return 0;
  }
