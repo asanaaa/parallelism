@@ -12,6 +12,25 @@
 
 
 namespace po = boost::program_options;
+// cuda unique_ptr
+template <typename T>
+using cuda_unique_ptr = std::unique_ptr<T, std::function<void(T *)>>;
+
+// new
+template <typename T>
+T *cuda_new(std::size_t size)
+{
+    T *d_ptr;
+    cudaMalloc((void **)&d_ptr, sizeof(T) * size);
+    return d_ptr;
+}
+
+// delete
+template <typename T>
+void cuda_delete(T *dev_ptr)
+{
+    cudaFree(dev_ptr);
+}
 
 __global__ void grid_kernel(double* A, double* Anew, int size) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;
@@ -117,9 +136,18 @@ void initialize(double *A, double *Anew, int m, int n) {
 
     initialize(A.get(), Anew.get(), m, n);
 
-    double* device_A, *device_Anew;
-    cudaMalloc(&device_A, n*m*sizeof(double));
-    cudaMalloc(&device_Anew, n*m*sizeof(double));
+    // double* device_A, *device_Anew;
+    // cudaMalloc(&device_A, n*m*sizeof(double));
+    // cudaMalloc(&device_Anew, n*m*sizeof(double));
+
+    double *device_A = cuda_new<double>(n*m);
+    cuda_unique_ptr<double> d_matA(device_A,
+                                  cuda_delete<double>);
+
+    double *device_Anew = cuda_new<double>(n*m);
+    cuda_unique_ptr<double> d_matB(device_Anew,
+                                  cuda_delete<double>);
+
     cudaMemcpy(device_A, A.get(), n*m*sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(device_Anew, Anew.get(), n*m*sizeof(double), cudaMemcpyHostToDevice);
 
